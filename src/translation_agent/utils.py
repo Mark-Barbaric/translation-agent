@@ -1,6 +1,9 @@
 import os
 from typing import List
 from typing import Union
+import logging
+#TODO: tidy up
+logger = logging.getLogger(__name__)
 
 import openai
 import tiktoken
@@ -20,6 +23,7 @@ MAX_TOKENS_PER_CHUNK = (
 
 def get_completion(
     prompt: str,
+    stage: str,
     system_message: str = "You are a helpful assistant.",
     model: str = "gpt-4-turbo",
     temperature: float = 0.3,
@@ -30,6 +34,7 @@ def get_completion(
 
     Args:
         prompt (str): The user's prompt or query.
+        stage (str): The stage of the multi agent translation.
         system_message (str, optional): The system message to set the context for the assistant.
             Defaults to "You are a helpful assistant.".
         model (str, optional): The name of the OpenAI model to use for generating the completion.
@@ -44,30 +49,22 @@ def get_completion(
             If json_mode is True, returns the complete API response as a dictionary.
             If json_mode is False, returns the generated text as a string.
     """
-
-    if json_mode:
-        response = client.chat.completions.create(
-            model=model,
-            temperature=temperature,
-            top_p=1,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": prompt},
-            ],
-        )
-        return response.choices[0].message.content
-    else:
-        response = client.chat.completions.create(
-            model=model,
-            temperature=temperature,
-            top_p=1,
-            messages=[
-                {"role": "system", "content": system_message},
-                {"role": "user", "content": prompt},
-            ],
-        )
-        return response.choices[0].message.content
+    response_format = {"type": "json_object"} if json_mode else None
+    response = client.chat.completions.create(
+        model=model,
+        temperature=temperature,
+        top_p=1,
+        response_format=response_format,
+        messages=[
+            {"role": "system", "content": system_message},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    logging.info(f"get_completion - stage: {stage}")
+    logging.info(f"get_completion - id: {response.id}")
+    logging.info(f"get_completion - role: {response.choices[0].message.role}")
+    logging.info(f"get_complete - usage: {response.usage}")
+    return response.choices[0].message.content
 
 
 def one_chunk_initial_translation(
@@ -95,7 +92,7 @@ Do not provide any explanations or text apart from the translation.
 
     prompt = translation_prompt.format(source_text=source_text)
 
-    translation = get_completion(prompt, system_message=system_message)
+    translation = get_completion(prompt, stage="initial", system_message=system_message)
 
     return translation
 
@@ -177,7 +174,7 @@ Output only the suggestions and nothing else."""
         source_text=source_text,
         translation_1=translation_1,
     )
-    reflection = get_completion(prompt, system_message=system_message)
+    reflection = get_completion(prompt, stage='reflect', system_message=system_message)
     return reflection
 
 
@@ -232,7 +229,7 @@ Please take into account the expert suggestions when editing the translation. Ed
 
 Output only the new translation and nothing else."""
 
-    translation_2 = get_completion(prompt, system_message)
+    translation_2 = get_completion(prompt, 'improve', system_message)
 
     return translation_2
 
@@ -347,7 +344,7 @@ Output only the translation of the portion you are asked to translate, and nothi
             chunk_to_translate=source_text_chunks[i],
         )
 
-        translation = get_completion(prompt, system_message=system_message)
+        translation = get_completion(prompt, stage='intial', system_message=system_message)
         translation_chunks.append(translation)
 
     return translation_chunks
@@ -468,7 +465,7 @@ Output only the suggestions and nothing else."""
                 translation_1_chunk=translation_1_chunks[i],
             )
 
-        reflection = get_completion(prompt, system_message=system_message)
+        reflection = get_completion(prompt, stage='reflect', system_message=system_message)
         reflection_chunks.append(reflection)
 
     return reflection_chunks
@@ -554,7 +551,7 @@ Output only the new translation of the indicated part and nothing else."""
             reflection_chunk=reflection_chunks[i],
         )
 
-        translation_2 = get_completion(prompt, system_message=system_message)
+        translation_2 = get_completion(prompt, stage='improve', system_message=system_message)
         translation_2_chunks.append(translation_2)
 
     return translation_2_chunks
@@ -650,6 +647,8 @@ def translate(
 ):
     """Translate the source_text from source_lang to target_lang."""
 
+    logging.basicConfig(filename='translation_agent.log', level=logging.INFO)
+    logging.info(f"translation_agent source_lang {source_lang}, target_lang {target_lang}")
     num_tokens_in_text = num_tokens_in_string(source_text)
 
     ic(num_tokens_in_text)
@@ -673,7 +672,7 @@ def translate(
         ic(token_size)
 
         text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            model_name="gpt-4",
+            model_name="gpt-3",
             chunk_size=token_size,
             chunk_overlap=0,
         )
